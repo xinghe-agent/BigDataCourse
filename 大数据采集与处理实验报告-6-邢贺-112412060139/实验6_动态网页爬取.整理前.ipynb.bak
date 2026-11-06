@@ -1,0 +1,319 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# 实验 6：动态网页爬取\n",
+    "\n",
+    "根据实验报告选择要求 1、2：百度自动检索、模拟鼠标翻页爬取软科 2025 中国大学排名并保存 CSV 和网页截图。\n",
+    "\n",
+    "请选择本机 bigdata Python 环境，重启内核后从上到下运行。第一格安装依赖；如安装后无法导入，请重启内核。输出保存在当前工作目录。网站出现验证码时，请在浏览器中检查后重新运行相应任务。"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "18750721",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%pip install \"selenium>=4.6,<5\" pandas"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. 导入所需库"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import time\n",
+    "from pathlib import Path\n",
+    "import pandas as pd\n",
+    "from selenium import webdriver\n",
+    "from selenium.common.exceptions import StaleElementReferenceException, TimeoutException\n",
+    "from selenium.webdriver.edge.service import Service\n",
+    "from selenium.webdriver.common.by import By\n",
+    "from selenium.webdriver.common.keys import Keys\n",
+    "from selenium.webdriver.common.action_chains import ActionChains\n",
+    "from selenium.webdriver.support.ui import WebDriverWait\n",
+    "from selenium.webdriver.support import expected_conditions as EC\n",
+    "KEYWORD = \"大数据采集与处理\"\n",
+    "HEADLESS = False  # 自动验证可设 True；截图时使用 False\n",
+    "OUTPUT_DIR = Path.cwd()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. 启动 Edge 浏览器\n",
+    "\n",
+    "优先使用本地驱动，路径不存在时由 Selenium Manager 自动管理（首次需要联网）。驱动版本应与 Edge 匹配。固定窗口尺寸，避免重复最大化报错。"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "EDGE_DRIVER_PATH = Path(r\"D:/msedgedriver64/msedgedriver.exe\")\n",
+    "if \"driver\" in globals():\n",
+    "    driver.quit()\n",
+    "options = webdriver.EdgeOptions()\n",
+    "options.add_argument(\"--window-size=1440,1000\")\n",
+    "if HEADLESS:\n",
+    "    options.add_argument(\"--headless=new\")\n",
+    "if EDGE_DRIVER_PATH.is_file():\n",
+    "    driver = webdriver.Edge(service=Service(str(EDGE_DRIVER_PATH)), options=options)\n",
+    "else:\n",
+    "    driver = webdriver.Edge(options=options)\n",
+    "driver.set_page_load_timeout(60)\n",
+    "wait = WebDriverWait(driver, 30)\n",
+    "print(\"Edge 启动成功：\", driver.capabilities.get(\"browserVersion\"))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. 任务一：使用 Selenium 自动搜索百度\n",
+    "\n",
+    "打开百度首页，输入关键词，点击搜索，并输出部分搜索结果标题。"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "driver.get(\"https://www.baidu.com\")\n",
+    "\n",
+    "def visible_search_box(browser):\n",
+    "    for element in browser.find_elements(By.CSS_SELECTOR, \"#kw, #chat-textarea, input[name='wd']\"):\n",
+    "        if element.is_displayed() and element.is_enabled():\n",
+    "            return element\n",
+    "    return False\n",
+    "\n",
+    "def baidu_needs_verification(browser):\n",
+    "    return (\"wappass.baidu.com\" in browser.current_url\n",
+    "            or \"百度安全验证\" in browser.title)\n",
+    "\n",
+    "def collect_baidu_results(timeout=30):\n",
+    "    \"\"\"人工验证完成后，可单独执行 collect_baidu_results()，无需重新搜索。\"\"\"\n",
+    "    result_titles = WebDriverWait(driver, timeout).until(lambda browser: [\n",
+    "        e.text.strip()\n",
+    "        for e in browser.find_elements(By.CSS_SELECTOR, \"#content_left h3\")\n",
+    "        if e.is_displayed() and e.text.strip()\n",
+    "    ])\n",
+    "    print(\"关键词：\", KEYWORD)\n",
+    "    for i, title in enumerate(result_titles[:10], 1):\n",
+    "        print(f\"{i}. {title}\")\n",
+    "    driver.save_screenshot(str(OUTPUT_DIR / \"百度检索结果.png\"))\n",
+    "    return result_titles\n",
+    "\n",
+    "titles = []\n",
+    "try:\n",
+    "    search_box = wait.until(visible_search_box)\n",
+    "    search_box.clear()\n",
+    "    search_box.send_keys(KEYWORD)\n",
+    "    submit_buttons = driver.find_elements(By.CSS_SELECTOR, \"#su, #chat-submit-button\")\n",
+    "    submit_button = next((e for e in submit_buttons if e.is_displayed() and e.is_enabled()), None)\n",
+    "    if submit_button is not None:\n",
+    "        submit_button.click()\n",
+    "    else:\n",
+    "        search_box.send_keys(Keys.ENTER)\n",
+    "    wait.until(lambda browser: baidu_needs_verification(browser)\n",
+    "               or any(e.is_displayed() for e in browser.find_elements(By.ID, \"content_left\")))\n",
+    "    if baidu_needs_verification(driver):\n",
+    "        print(\"百度要求安全验证，请在 Edge 中手动完成。\")\n",
+    "        if not HEADLESS:\n",
+    "            print(\"等待人工验证，最多 120 秒……\")\n",
+    "            titles = collect_baidu_results(timeout=120)\n",
+    "        else:\n",
+    "            print(\"当前是无界面模式；请将 HEADLESS 设为 False 后重新启动浏览器并运行本任务。\")\n",
+    "            driver.save_screenshot(str(OUTPUT_DIR / \"百度安全验证.png\"))\n",
+    "    else:\n",
+    "        titles = collect_baidu_results()\n",
+    "except TimeoutException:\n",
+    "    print(\"等待百度结果超时，本次未获取到检索结果。\")\n",
+    "    print(\"当前网址：\", driver.current_url)\n",
+    "    print(\"页面标题：\", driver.title)\n",
+    "    if baidu_needs_verification(driver):\n",
+    "        print(\"请手动完成安全验证后，在新单元格运行：titles = collect_baidu_results()\")\n",
+    "    else:\n",
+    "        print(\"请检查浏览器中的网络或页面状态；若已显示结果，运行：titles = collect_baidu_results()\")\n",
+    "    driver.save_screenshot(str(OUTPUT_DIR / \"百度等待超时.png\"))\n",
+    "    print(\"可以继续运行后面的软科采集单元格。\")\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. 任务二：爬取软科 2025 年中国大学排名\n",
+    "\n",
+    "进入软科排名页面，提取每页的排名、学校名称、标签、省市和类型，再通过点击“下一页”继续爬取。\n",
+    "\n",
+    "页面地址：https://www.shanghairanking.cn/rankings/bcur/2025"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rank_url = \"https://www.shanghairanking.cn/rankings/bcur/2025\"\n",
+    "ROW_SELECTOR = \"#content-box table tbody tr\"\n",
+    "NEXT_SELECTOR = \"#content-box li.ant-pagination-next\"\n",
+    "def get_text(parent, selector):\n",
+    "    elements = parent.find_elements(By.CSS_SELECTOR, selector)\n",
+    "    return elements[0].text.strip() if elements else \"\"\n",
+    "def parse_page():\n",
+    "    data = []\n",
+    "    for row in driver.find_elements(By.CSS_SELECTOR, ROW_SELECTOR):\n",
+    "        cells = row.find_elements(By.TAG_NAME, \"td\")\n",
+    "        if len(cells) < 4:\n",
+    "            continue\n",
+    "        school = get_text(cells[1], \".name-cn\")\n",
+    "        rank = cells[0].text.strip()\n",
+    "        if school and rank:\n",
+    "            data.append({\"排名\": rank, \"学校名称\": school, \"标签\": get_text(cells[1], \".tags\"), \"省市\": cells[2].text.strip(), \"类型\": cells[3].text.strip()})\n",
+    "    return data\n",
+    "def page_ready(browser):\n",
+    "    try:\n",
+    "        return parse_page() or False\n",
+    "    except StaleElementReferenceException:\n",
+    "        return False"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. 模拟鼠标翻页采集数据\n",
+    "\n",
+    "每次运行从第一页开始，最多 20 页，末页提前结束。可将 MAX_PAGES 改为 2 快速验证。以首行数据变化判断翻页完成，适应页面复用 DOM 的情况。"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "MAX_PAGES = 20\n",
+    "if not isinstance(MAX_PAGES, int) or MAX_PAGES < 1:\n",
+    "    raise ValueError(\"MAX_PAGES 必须是正整数\")\n",
+    "all_data = []\n",
+    "started = time.perf_counter()\n",
+    "driver.get(rank_url)\n",
+    "for page in range(1, MAX_PAGES + 1):\n",
+    "    page_data = wait.until(page_ready)\n",
+    "    all_data.extend(page_data)\n",
+    "    print(f\"第 {page} 页：采集 {len(page_data)} 条\")\n",
+    "    if page == MAX_PAGES:\n",
+    "        break\n",
+    "    next_li = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, NEXT_SELECTOR)))\n",
+    "    if \"ant-pagination-disabled\" in (next_li.get_attribute(\"class\") or \"\"):\n",
+    "        break\n",
+    "    previous_first = (page_data[0][\"排名\"], page_data[0][\"学校名称\"])\n",
+    "    driver.execute_script(\"arguments[0].scrollIntoView({block: 'center'});\", next_li)\n",
+    "    ActionChains(driver).move_to_element(next_li).click().perform()\n",
+    "    def page_changed(browser):\n",
+    "        data = page_ready(browser)\n",
+    "        return data if data and (data[0][\"排名\"], data[0][\"学校名称\"]) != previous_first else False\n",
+    "    wait.until(page_changed)\n",
+    "    time.sleep(0.5)\n",
+    "print(f\"总采集条数：{len(all_data)}，耗时：{time.perf_counter() - started:.1f} 秒\")\n",
+    "driver.save_screenshot(str(OUTPUT_DIR / \"软科排名页面.png\"))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 6. 保存数据"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "if not all_data:\n",
+    "    raise RuntimeError(\"请先成功运行第 5 节采集数据\")\n",
+    "df = pd.DataFrame(all_data).drop_duplicates(subset=[\"学校名称\"]).reset_index(drop=True)\n",
+    "output_path = OUTPUT_DIR / \"软科2025中国大学排名.csv\"\n",
+    "df.to_csv(output_path, index=False, encoding=\"utf-8-sig\")\n",
+    "print(df.head(10).to_string(index=False))\n",
+    "print(\"去重后数据条数：\", len(df))\n",
+    "print(\"保存位置：\", output_path.resolve())"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 7. 实验知识点\n",
+    "\n",
+    "1. 根据 id 定位元素：`driver.find_element(By.ID, \"元素id\")`。\n",
+    "2. 根据 CSS 选择器定位元素：`driver.find_elements(By.CSS_SELECTOR, \"选择器\")`。\n",
+    "3. 显式等待：`WebDriverWait(driver, 10).until(...)`。\n",
+    "4. 固定等待：`time.sleep(1)`。\n",
+    "5. 模拟鼠标点击：`ActionChains(driver).move_to_element(element).click().perform()`。\n",
+    "6. 获取标签文本：`element.text`。\n",
+    "7. 保存数据：`DataFrame.to_csv()`。"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 8. 关闭浏览器"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "driver.quit()\n",
+    "print(\"浏览器已关闭\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "bigdata",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.11.18"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
